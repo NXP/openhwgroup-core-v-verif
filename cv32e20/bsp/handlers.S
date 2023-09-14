@@ -24,6 +24,7 @@
 #define EXCEPTION_ILLEGAL_INSN 2
 #define EXCEPTION_BREAKPOINT 3
 #define EXCEPTION_ECALL_M 11
+#define mnepc 0x741
 
 .section .text.handlers
 .global __no_irq_handler
@@ -47,6 +48,7 @@
 .global m_fast13_irq_handler
 .global m_fast14_irq_handler
 .global m_fast15_irq_handler
+.global nmi_irq_handler
 
 .weak u_sw_irq_handler
 .weak m_software_irq_handler
@@ -68,6 +70,7 @@
 .weak m_fast13_irq_handler
 .weak m_fast14_irq_handler
 .weak m_fast15_irq_handler
+.weak nmi_irq_handler
 
 
 /* exception handling */
@@ -162,6 +165,29 @@ u_sw_irq_handler:
 	beq t0, t1, handle_ebreak
 	j handle_unknown
 
+nmi_irq_handler:
+    addi sp,sp,-8
+    /*x15*/
+    sw a5, 0(sp)
+    /*x15*/
+    sw s5, 4(sp)
+	csrr a0, mcause
+	la a0, nmi_handler_msg
+	jal ra, puts
+
+    lw a5, 0(sp)
+    lw s5, 4(sp)
+    addi sp,sp,8
+
+    /*mret*/
+    /*.word 0x30200073*/
+    /*mnret*/
+    .word 0x70200073
+    /*.insn i #0x73, 0, r0, r0, #0x0302*/
+    /*.insn i 0x73, 0, 0, 702(0)*/
+	/*j nmi_irq_handler*/
+    /*j end_handler_incr_mnepc*/
+
 handle_ecall:
 	jal ra, handle_syscall
 	j end_handler_incr_mepc
@@ -216,6 +242,43 @@ end_handler_ret:
 	addi sp,sp,64
 	mret
 
+end_handler_incr_mnepc:
+	/*csrr t0, 0x741*/
+	csrr t0, mnepc
+	lb t1, 0(t0)
+	li a0, 0x3
+	and t1, t1, a0
+	/* Increment mnepc by 2 or 4 depending on whether the instruction at mnepc
+	   is compressed or not.  */
+	bne t1, a0, end_handler_incr_mnepc2
+	addi t0, t0, 2
+end_handler_incr_mnepc2:
+	addi t0, t0, 2
+	/*csrw mnepc, t0*/
+	/*csrrw x0, 0x741, t0*/
+	csrrw x0, mnepc, t0
+end_handler_mnret:
+	lw ra, 0(sp)
+	lw a0, 4(sp)
+	lw a1, 8(sp)
+	lw a2, 12(sp)
+	lw a3, 16(sp)
+	lw a4, 20(sp)
+	lw a5, 24(sp)
+	lw a6, 28(sp)
+	lw a7, 32(sp)
+	lw t0, 36(sp)
+	lw t1, 40(sp)
+	lw t2, 44(sp)
+	lw t3, 48(sp)
+	lw t4, 52(sp)
+	lw t5, 56(sp)
+	lw t6, 60(sp)
+	addi sp,sp,64
+    /*mnret*/
+    .word 0x70200073
+	/*mret*/
+
 .section .rodata
 illegal_insn_msg:
 	.string "CV32E20 BSP: illegal instruction exception handler entered\n"
@@ -227,3 +290,5 @@ unknown_msg:
 	.string "CV32E20 BSP: unknown exception handler entered\n"
 no_exception_handler_msg:
 	.string "CV32E20 BSP: no exception handler installed\n"
+nmi_handler_msg:
+	.string "NMI exception\n"
